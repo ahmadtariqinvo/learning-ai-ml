@@ -1,0 +1,105 @@
+from openai import OpenAI
+from dotenv import load_dotenv
+from pydantic import BaseModel
+from typing import Any
+import os
+import time
+
+# Load environment variables
+load_dotenv()
+
+api_key = os.getenv("OPENROUTER_API_KEY")
+
+if not api_key:
+    raise Exception("OPENROUTER_API_KEY not found")
+
+# OpenRouter Client
+client = OpenAI(
+    api_key=api_key,
+    base_url="https://openrouter.ai/api/v1"
+)
+
+# Response Schema
+class AIResponse(BaseModel):
+    result: str
+    confidence_score: float
+    needs_human_review: bool
+
+
+CONFIDENCE_THRESHOLD = 0.70
+
+
+def calculate_confidence(result: str) -> float:
+    """
+    Simple confidence scoring logic.
+    Replace with a more advanced method later.
+    """
+
+    if len(result) > 100:
+        return 0.90
+    elif len(result) > 50:
+        return 0.80
+    else:
+        return 0.60
+
+
+def call_ai_with_retry(prompt: str, max_retries: int = 3) -> str:
+    """
+    Calls OpenRouter with retry logic.
+    """
+
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model="openai/gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            )
+
+            result = response.choices[0].message.content
+
+            if result:
+                return result
+
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed: {e}")
+
+        time.sleep(1)
+
+    raise RuntimeError("AI call failed after 3 attempts")
+
+
+def process_prompt(prompt: str) -> dict[str, Any]:
+    """
+    Production-style AI pipeline:
+    Validation -> Retry -> AI -> Output Validation -> Confidence Check
+    """
+
+    # Input Validation
+    if not prompt.strip():
+        raise ValueError("Prompt cannot be empty")
+
+    # AI Call with Retry Logic
+    result = call_ai_with_retry(prompt)
+
+    # Confidence Score
+    confidence = calculate_confidence(result)
+
+    # Validated Response
+    validated_response = AIResponse(
+        result=result,
+        confidence_score=confidence,
+        needs_human_review=confidence < CONFIDENCE_THRESHOLD
+    )
+
+    return validated_response.model_dump()
+
+if __name__ == "__main__":
+
+    output = process_prompt("What is an LLM?")
+
+    print(output)
